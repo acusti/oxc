@@ -71,6 +71,32 @@ the printer collapses consecutive line breaks, so they are emitted as raw `\n` t
   Pre-existing behavior of the positional comment cursor, affects type-system
   descriptions too; no conformance test covers this shape.
 
+## Roadmap / TODO (graphql-js 17 / Prettier main)
+
+The guiding axis is **Prettier compatibility, not spec compliance**: match the
+syntax that the graphql-js version Prettier depends on can format
+(Prettier stable = graphql-js 16, Prettier main = graphql-js 17). Directive
+applications like `@oneOf` / `@defer` need no work — apollo-parser 0.8.6 already
+parses them.
+
+These are in Prettier's unreleased changelog (main has them, next stable will).
+Spec ratification is 2026+ at the earliest (RFC #1206 etc. still in flux).
+
+- **Prettier [#18582](https://github.com/prettier/prettier/blob/main/changelog_unreleased/graphql/18582.md)**:
+  allow `implements` lists to break. We currently implement **never break**
+  (see `tests/fixtures/format/implements-width.graphql`), so this is a layout
+  divergence that will become incompatible — not a new-syntax item, lands sooner.
+- **Prettier [#19171](https://github.com/prettier/prettier/blob/main/changelog_unreleased/graphql/19171.md)**:
+  directives on directive definitions (`directive @a @b on QUERY`) + `extend
+  directive`. graphql-js 17 graduated this to default (no option).
+- **Prettier [#19297](https://github.com/prettier/prettier/blob/main/changelog_unreleased/graphql/19297.md)**:
+  fragment arguments (`...F(size: $size)`). graphql-js 17 still gates it behind
+  `experimentalFragmentArguments`; it replaces the v16 `allowLegacyFragmentVariables`
+  (definition-side, parser-only), which v17 removed.
+
+Adding any of these to the fork needs new grammar in apollo-parser (unlike
+`@oneOf`, these are genuinely new syntax).
+
 ## Verification
 
 ```sh
