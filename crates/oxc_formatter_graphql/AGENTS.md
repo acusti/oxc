@@ -13,14 +13,19 @@ Prettier compatible GraphQL formatter (`oxfmt`'s Tier 1 backend), using the `oxc
     from the shared `EmbeddedContext` arena, emits no BOM / trailing newline,
     and leaves `propagate_expand()` to the parent document
 - Parses with a [fork of apollo-parser](https://github.com/leaysgur/apollo-rs)
-  (rowan-based lossless CST), branch `graphql-draft-syntax`
-  - Base: 0.8.6 (October 2021 spec). The fork adds what Prettier's
-    graphql-js 16.12 also accepts: **2025 descriptions** on executable
-    definitions (operation / fragment / variable definition) and
-    **legacy fragment variables** (`fragment F($x: Int) on T`)
-  - NOT covered (graphql-js 17 / Prettier main draft syntax): fragment spread
-    arguments (`...F(x: 1)`), directives on directive definitions, directive
-    extensions — Prettier 3.8.4 cannot parse these either
+  (rowan-based lossless CST), pinned via `rev` in the workspace `Cargo.toml`
+  - Base: 0.8.6 (October 2021 spec). The fork adds, behind **opt-in** parser
+    flags, what Prettier's graphql-js 16.12 also accepts: **executable
+    descriptions** on operation / fragment / variable definitions
+    (Sep2025 spec, graphql-spec #1170) and **legacy fragment variables**
+    (`fragment F($x: Int) on T`). Both default to off; `format.rs` enables them
+    explicitly via `allow_executable_descriptions` /
+    `allow_legacy_fragment_variables` on `Parser`
+  - NOT covered by the fork (graphql-js 17 syntax): fragment spread arguments
+    (`...F(x: 1)`), directives on directive definitions, directive extensions.
+    Prettier 3.8.4 (stable) also rejects these, but Prettier main already
+    handles directives-on-directives (#19171) and fragment arguments (#19297) —
+    see the Roadmap below; following main here is future work
   - Remaining parse errors make `format()` return `Err`; there is NO Prettier
     fallback (oxfmt reports a diagnostic for standalone files, and an embedded
     dispatch error makes the parent print the template as-is)
@@ -88,7 +93,7 @@ Spec ratification is 2026+ at the earliest (RFC #1206 etc. still in flux).
   divergence that will become incompatible — not a new-syntax item, lands sooner.
 - **Prettier [#19171](https://github.com/prettier/prettier/blob/main/changelog_unreleased/graphql/19171.md)**:
   directives on directive definitions (`directive @a @b on QUERY`) + `extend
-  directive`. graphql-js 17 graduated this to default (no option).
+directive`. graphql-js 17 graduated this to default (no option).
 - **Prettier [#19297](https://github.com/prettier/prettier/blob/main/changelog_unreleased/graphql/19297.md)**:
   fragment arguments (`...F(size: $size)`). graphql-js 17 still gates it behind
   `experimentalFragmentArguments`; it replaces the v16 `allowLegacyFragmentVariables`
