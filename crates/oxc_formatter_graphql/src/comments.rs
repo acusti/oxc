@@ -15,8 +15,7 @@ use crate::print::{GraphqlFormatter, format_with};
 /// GraphQL comments are always single-line (`# ...` to end of line) and are collected
 /// from the CST's trivia tokens by `format()`.
 ///
-/// `cursor` is a [`Cell`] so the API works through `&self`
-/// (mirrors `oxc_formatter_json`'s `Comments`).
+/// `cursor` is a [`Cell`] so the API works through `&self` (mirrors `oxc_formatter_json`'s `Comments`).
 pub struct Comments<'a> {
     inner: &'a [Span],
     cursor: Cell<usize>,
@@ -113,7 +112,7 @@ pub fn classify_gap(slice: &[u8]) -> Gap {
 
 /// Emit a single comment verbatim (trailing whitespace trimmed).
 /// Mirrors Prettier's `printComment`: `"#" + comment.value.trimEnd()`.
-pub fn write_single_comment(span: Span, f: &mut GraphqlFormatter<'_, '_>) {
+fn write_single_comment(span: Span, f: &mut GraphqlFormatter<'_, '_>) {
     let content = f.context().source_text().text_for(&span);
     write!(f, text(content.trim_end()));
 }
@@ -130,11 +129,7 @@ fn write_gap(gap: &[u8], f: &mut GraphqlFormatter<'_, '_>) {
 
 /// Emit comments that precede a node,
 /// preserving the source's vertical spacing (0/1/blank) between each comment and the next position.
-pub fn write_leading_comments(
-    comments: &[Span],
-    value_start: u32,
-    f: &mut GraphqlFormatter<'_, '_>,
-) {
+fn write_leading_comments(comments: &[Span], value_start: u32, f: &mut GraphqlFormatter<'_, '_>) {
     let source = f.context().source_text();
     for (i, &span) in comments.iter().enumerate() {
         write_single_comment(span, f);
@@ -183,7 +178,7 @@ pub fn write_trailing_same_line_comment<'a>(prev_end: u32, f: &mut GraphqlFormat
 /// (its width must not count toward the `fits` measurement of the preceding group)
 /// with `expand_parent()` so the enclosing container stays multi-line.
 /// `lower_bound` seeds the gap measurement for the first comment.
-pub fn write_trailing_inside_comments<'a>(
+fn write_trailing_inside_comments<'a>(
     comments: &[Span],
     lower_bound: u32,
     f: &mut GraphqlFormatter<'_, 'a>,
@@ -214,7 +209,7 @@ pub fn flush_trailing_inside_comments(
 }
 
 /// Returns `true` if `span` is an ignore marker (`# oxfmt-ignore` / `# prettier-ignore`).
-pub fn is_suppression_comment(source: SourceText<'_>, span: Span) -> bool {
+fn is_suppression_comment(source: SourceText<'_>, span: Span) -> bool {
     let content = source.text_for(&span);
     is_suppression_marker(content.strip_prefix('#').unwrap_or(content))
 }
