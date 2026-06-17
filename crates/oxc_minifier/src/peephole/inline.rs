@@ -2,7 +2,10 @@ use crate::generated::ancestor::Ancestor;
 use oxc_ast::ast::*;
 use oxc_ecmascript::constant_evaluation::{ConstantEvaluation, ConstantValue};
 use oxc_span::GetSpan;
-use oxc_syntax::{scope::ScopeId, symbol::SymbolId};
+use oxc_syntax::{
+    scope::{ScopeFlags, ScopeId},
+    symbol::SymbolId,
+};
 
 use crate::TraverseCtx;
 
@@ -12,6 +15,13 @@ impl<'a> PeepholeOptimizations {
     pub fn init_symbol_value(decl: &VariableDeclarator<'a>, ctx: &mut TraverseCtx<'a>) {
         let BindingPattern::BindingIdentifier(ident) = &decl.id else { return };
         let Some(symbol_id) = ident.symbol_id.get() else { return };
+        // Evaluate the initializer's constant once; reuse it for the value-context
+        // constant and the boolean-falsy fact below. `None` for a non-constant or
+        // absent initializer.
+        let init_constant = decl.init.as_ref().and_then(|e| e.evaluate_value(ctx));
+        // Whether the initializer is an explicit falsy constant (not the implicit
+        // `undefined` of `var x;`, which `init_constant` leaves `None`).
+        let falsy_init = init_constant.as_ref().is_some_and(Self::is_falsy_constant);
         let value = if Self::is_for_statement_init(ctx) {
             // for-statement initializers have their value set by the for statement itself.
             None
@@ -20,10 +30,52 @@ impl<'a> PeepholeOptimizations {
             // Skip unless the safety predicate proves no such read exists.
             None
         } else {
-            decl.init.as_ref().map_or(Some(ConstantValue::Undefined), |e| e.evaluate_value(ctx))
+            // No initializer hoists to `undefined`; otherwise reuse the constant.
+            decl.init.as_ref().map_or(Some(ConstantValue::Undefined), |_| init_constant)
         };
+        // Withheld from value-context folding (`var` past a dirty prelude, etc.).
+        let value_withheld = value.is_none();
         let is_fresh_value = decl.init.as_ref().is_some_and(Self::is_fresh_value_expression);
         ctx.init_value(symbol_id, value, is_fresh_value);
+
+        // A write-once falsy `var` whose value-context constant was withheld is
+        // still falsy in boolean context (a pre-init read sees `undefined`, which
+        // `if (x)` / `x ? … : …` / `!x` can't tell from the falsy init). Mark it so
+        // `minimize_expression_in_boolean_context` can fold those reads to `false`.
+        if value_withheld && falsy_init && Self::is_boolean_falsy_var(symbol_id, ctx) {
+            ctx.state.symbol_values.set_boolean_falsy(symbol_id);
+        }
+    }
+
+    /// A `ConstantValue` that coerces to `false` (`false`, `0`/`-0`/`NaN`, `""`,
+    /// `null`, `undefined`). BigInt is skipped conservatively.
+    fn is_falsy_constant(cv: &ConstantValue<'a>) -> bool {
+        match cv {
+            ConstantValue::Boolean(b) => !b,
+            ConstantValue::Number(n) => n.is_nan() || *n == 0.0,
+            ConstantValue::String(s) => s.as_ref().is_empty(),
+            ConstantValue::Null | ConstantValue::Undefined => true,
+            ConstantValue::BigInt(_) => false,
+        }
+    }
+
+    /// Gates for folding a withheld falsy `var` in boolean context: it must be
+    /// write-once, not in a direct-`eval` scope, and not a script's top-level
+    /// global (which another script could reassign, so a 0 in-module write count
+    /// doesn't prove write-once).
+    fn is_boolean_falsy_var(symbol_id: SymbolId, ctx: &TraverseCtx<'a>) -> bool {
+        let scoping = ctx.scoping();
+        let scope_id = scoping.symbol_scope_id(symbol_id);
+        if scoping.scope_flags(scope_id).contains(ScopeFlags::DirectEval) {
+            return false;
+        }
+        if ctx.source_type().is_script() && scope_id == scoping.root_scope_id() {
+            return false;
+        }
+        ctx.state
+            .symbol_values
+            .get_symbol_value(symbol_id)
+            .is_some_and(|sv| sv.write_references_count == 0)
     }
 
     /// Predicate for inlining a hoisted `var x = <literal>;`. True when no read
@@ -37,10 +89,13 @@ impl<'a> PeepholeOptimizations {
     ///   `export … from`, `export * from`), skip: a cyclic importer can call
     ///   into our exports and observe any var our exported functions/classes
     ///   close over, regardless of export status;
-    /// - exactly one read, and it sits inside a nested function/arrow body
-    ///   (multi-use and same-call-frame reads are handled by
-    ///   `inline_identifier_reference`'s small-value rule or by
-    ///   `substitute_single_use_symbol`).
+    /// - every read sits inside a nested function/arrow body (the gap
+    ///   `substitute_single_use_symbol` can't reach). Multiple such reads are
+    ///   fine: the prelude check proves none observes the hoisted `undefined`,
+    ///   so the value is constant at every read, and the small-value rule /
+    ///   write-count guard in `inline_identifier_reference` decide whether each
+    ///   read actually folds (e.g. a write-once falsy flag read by `if (flag)`
+    ///   throughout — the Svelte/Vue `hydrating` shape, #14001).
     ///
     /// Limitation: the constant is recorded here at the declarator's exit, so a
     /// reader in a function declared *before* the var in source order has
@@ -61,11 +116,13 @@ impl<'a> PeepholeOptimizations {
         if body_unsafe || ctx.current_scope_id() != body_scope {
             return false;
         }
-        // Exactly one read, and it crosses a function boundary.
+        // At least one read, and every read crosses a function boundary.
         let mut reads = ctx.scoping().get_resolved_references(symbol_id).filter(|r| r.is_read());
-        let Some(read) = reads.next() else { return false };
-        reads.next().is_none()
-            && Self::read_crosses_function_boundary(read.scope_id(), body_scope, ctx)
+        let Some(first) = reads.next() else { return false };
+        if !Self::read_crosses_function_boundary(first.scope_id(), body_scope, ctx) {
+            return false;
+        }
+        reads.all(|read| Self::read_crosses_function_boundary(read.scope_id(), body_scope, ctx))
     }
 
     /// True if the scope chain from `read_scope` to `body_scope` (exclusive of

@@ -299,6 +299,9 @@ impl<'a> TraverseCtx<'a, MinifierState<'a>> {
             write_references_count,
             member_write_target_read_count,
             is_fresh_value,
+            // Set post-construction by `init_symbol_value` (it has the declarator
+            // and the un-gated initializer needed to decide this).
+            boolean_falsy: false,
         };
         self.state.symbol_values.init_value(symbol_id, symbol_value);
     }
